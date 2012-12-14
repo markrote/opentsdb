@@ -231,6 +231,9 @@ public final class UniqueId implements UniqueIdInterface {
     short attempt = MAX_ATTEMPTS_ASSIGN_ID;
     HBaseException hbe = null;
 
+    // MapR: Setting norowlock to 'true' for now.
+    System.setProperty("tsd.core.norowlock", "true");
+
     while (attempt-- > 0) {
       try {
         return getId(name);
