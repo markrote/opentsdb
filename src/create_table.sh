@@ -34,6 +34,7 @@ exec "$hbh/bin/hbase" shell <<EOF
 create '$UID_TABLE',
   {NAME => 'id', COMPRESSION => '$COMPRESSION'},
   {NAME => 'name', COMPRESSION => '$COMPRESSION'}
+  {NAME => 'rowlock', COMPRESSION => '$COMPRESSION'}
 
 create '$TSDB_TABLE',
   {NAME => 't', VERSIONS => 1, COMPRESSION => '$COMPRESSION', BLOOMFILTER => '$BLOOMFILTER'}

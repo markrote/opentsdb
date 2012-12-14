@@ -50,6 +50,8 @@ public final class UniqueId implements UniqueIdInterface {
   private static final byte[] ID_FAMILY = toBytes("id");
   /** The single column family used by this class. */
   private static final byte[] NAME_FAMILY = toBytes("name");
+  /** The single column family used by this class. */
+  private static final byte[] ROWLOCK_FAMILY = toBytes("name");
   /** Row key of the special row used to track the max ID already assigned. */
   private static final byte[] MAXID_ROW = { 0 };
   /** How many time do we try to assign an ID before giving up. */
@@ -238,21 +240,29 @@ public final class UniqueId implements UniqueIdInterface {
       }
 
       // The dance to assign an ID.
-      RowLock lock;
-      try {
-        lock = getLock();
-      } catch (HBaseException e) {
+      RowLock lock = null;
+
+      if (System.getProperty("tsd.core.norowlock") == null) {
         try {
-          Thread.sleep(61000 / MAX_ATTEMPTS_ASSIGN_ID);
-        } catch (InterruptedException ie) {
-          break;  // We've been asked to stop here, let's bail out.
+          lock = getLock();
+        } catch (HBaseException e) {
+          try {
+            Thread.sleep(61000 / MAX_ATTEMPTS_ASSIGN_ID);
+          } catch (InterruptedException ie) {
+            break;  // We've been asked to stop here, let's bail out.
+          }
+          hbe = e;
+          continue;
         }
-        hbe = e;
-        continue;
-      }
-      if (lock == null) {  // Should not happen.
-        LOG.error("WTF, got a null pointer as a RowLock!");
-        continue;
+        if (lock == null) {  // Should not happen.
+          LOG.error("WTF, got a null pointer as a RowLock!");
+          continue;
+        }
+      } else {
+        if (!getLockNoRowLock()) {
+          LOG.error("Failed to acquire lock");
+          continue;
+        }
       }
       // We now have hbase.regionserver.lease.period ms to complete the loop.
 
@@ -292,8 +302,14 @@ public final class UniqueId implements UniqueIdInterface {
               }
               row = Bytes.fromLong(id);
             }
-            final PutRequest update_maxid = new PutRequest(
-              table, MAXID_ROW, ID_FAMILY, kind, row, lock);
+            final PutRequest update_maxid;
+            if (lock != null) {
+              update_maxid = 
+                new PutRequest(table, MAXID_ROW, ID_FAMILY, kind, row, lock);
+            } else {
+              update_maxid = 
+                new PutRequest(table, MAXID_ROW, ID_FAMILY, kind, row);
+            }
             hbasePutWithRetry(update_maxid, MAX_ATTEMPTS_PUT,
                               INITIAL_EXP_BACKOFF_DELAY);
           } // end HACK HACK HACK.
@@ -364,9 +380,14 @@ public final class UniqueId implements UniqueIdInterface {
         addNameToCache(row, name);
         return row;
       } finally {
-        unlock(lock);
+        if (System.getProperty("tsd.core.norowlock") == null) {
+          unlock(lock);
+        } else {
+          unlockNoRowLock();
+        }
       }
     }
+    
     if (hbe == null) {
       throw new IllegalStateException("Should never happen!");
     }
@@ -566,6 +587,38 @@ public final class UniqueId implements UniqueIdInterface {
     } catch (HBaseException e) {
       LOG.error("Error while releasing the lock on row `MAXID_ROW'", e);
     }
+  }
+  
+  // To be used when you want to avoid RowLocks
+  private byte[] lock = "lock".getBytes();
+  private byte[] lockval = "myID".getBytes();
+  int interval = 61000 / MAX_ATTEMPTS_ASSIGN_ID;
+  
+  private boolean getLockNoRowLock()
+  {
+      PutRequest put = new PutRequest(table, MAXID_ROW, ROWLOCK_FAMILY, lock, lockval);
+      int attempts = 0;
+      try {
+        while (attempts < MAX_ATTEMPTS_ASSIGN_ID && 
+            !client.compareAndSet(put, new byte[0]).joinUninterruptibly(interval)) {
+          ++attempts;          
+        }
+        return (attempts == MAX_ATTEMPTS_ASSIGN_ID) ? false : true;
+      }
+      catch(Throwable w) {
+        LOG.error("Exception while attempting to acquire lock");
+        return false;
+      }
+  }
+  
+  public void unlockNoRowLock()
+  {
+      PutRequest put = new PutRequest(table, MAXID_ROW, ROWLOCK_FAMILY, lock, new byte[0]);
+      try {
+         client.compareAndSet(put, lockval);
+      } catch(Throwable w) {
+        LOG.error("Exception while attempting to release lock");
+      }
   }
 
   /** Returns the cell of the specified row, using family:kind. */

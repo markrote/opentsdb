@@ -43,6 +43,7 @@ final class CliOptions {
     argp.addOption("--zkbasedir", "PATH",
                    "Path under which is the znode for the -ROOT- region"
                    + " (default: /hbase).");
+    argp.addOption("--norowlock", "Avoid taking row locks on the regionserver");
   }
 
   /** Adds a --verbose flag.  */
@@ -95,6 +96,9 @@ final class CliOptions {
   static HBaseClient clientFromOptions(final ArgP argp) {
     if (argp.optionExists("--auto-metric") && argp.has("--auto-metric")) {
       System.setProperty("tsd.core.auto_create_metrics", "true");
+    }
+    if (argp.optionExists("--norowlock") && argp.has("--norowlock")) {
+      System.setProperty("tsd.core.norowlock", "true");
     }
     final String zkq = argp.get("--zkquorum", "localhost");
     if (argp.has("--zkbasedir")) {
