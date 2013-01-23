@@ -51,7 +51,7 @@ public final class UniqueId implements UniqueIdInterface {
   /** The single column family used by this class. */
   private static final byte[] NAME_FAMILY = toBytes("name");
   /** The single column family used by this class. */
-  private static final byte[] ROWLOCK_FAMILY = toBytes("name");
+  private static final byte[] ROWLOCK_FAMILY = toBytes("rowlock");
   /** Row key of the special row used to track the max ID already assigned. */
   private static final byte[] MAXID_ROW = { 0 };
   /** How many time do we try to assign an ID before giving up. */
@@ -603,7 +603,7 @@ public final class UniqueId implements UniqueIdInterface {
       int attempts = 0;
       try {
         while (attempts < MAX_ATTEMPTS_ASSIGN_ID && 
-            !client.compareAndSet(put, new byte[0]).joinUninterruptibly(interval)) {
+            !client.compareAndSet(put, (byte [])null).joinUninterruptibly(interval)) {
           ++attempts;          
         }
         return (attempts == MAX_ATTEMPTS_ASSIGN_ID) ? false : true;
@@ -616,7 +616,7 @@ public final class UniqueId implements UniqueIdInterface {
   
   public void unlockNoRowLock()
   {
-      PutRequest put = new PutRequest(table, MAXID_ROW, ROWLOCK_FAMILY, lock, new byte[0]);
+      PutRequest put = new PutRequest(table, MAXID_ROW, ROWLOCK_FAMILY, lock, null);
       try {
          client.compareAndSet(put, lockval);
       } catch(Throwable w) {

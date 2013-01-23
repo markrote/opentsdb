@@ -39,7 +39,7 @@ final class CliOptions {
                    + " (default: tsdb-uid).");
     argp.addOption("--zkquorum", "SPEC",
                    "Specification of the ZooKeeper quorum to use"
-                   + " (default: localhost).");
+                   + " (default: localhost:5181).");
     argp.addOption("--zkbasedir", "PATH",
                    "Path under which is the znode for the -ROOT- region"
                    + " (default: /hbase).");
@@ -100,7 +100,7 @@ final class CliOptions {
     if (argp.optionExists("--norowlock") && argp.has("--norowlock")) {
       System.setProperty("tsd.core.norowlock", "true");
     }
-    final String zkq = argp.get("--zkquorum", "localhost");
+    final String zkq = argp.get("--zkquorum", "localhost:5181");
     if (argp.has("--zkbasedir")) {
       return new HBaseClient(zkq, argp.get("--zkbasedir"));
     } else {

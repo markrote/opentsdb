@@ -3,6 +3,7 @@
 set -e
 me=`basename "$0"`
 mydir=`dirname "$0"`
+BASEMAPR=/opt/mapr/
 # Either:
 #  abs_srcdir and abs_builddir are set: we're running in a dev tree
 #  or pkgdatadir is set: we've been installed, we respect that.
@@ -42,6 +43,17 @@ else
   # Add the src dir so we can find logback.xml
   CLASSPATH="$CLASSPATH:$abs_srcdir/src"
 fi
+
+if test -n "$BASEMAPR/hadoop/hadoop-0.20.2/lib"; then
+  for jar in "$BASEMAPR"/hadoop/hadoop-0.20.2/lib/*.jar; do
+    if [ "`echo $jar | grep slf4j`" != "" ]; then
+      continue
+    fi
+    CLASSPATH="$CLASSPATH:$jar"
+  done
+fi
+
+
 # Remove any leading colon.
 CLASSPATH="${CLASSPATH#:}"
 
@@ -85,4 +97,4 @@ shift
 JAVA=${JAVA-'java'}
 JVMARGS=${JVMARGS-'-enableassertions -enablesystemassertions'}
 test -r "$localdir/tsdb.local" && . "$localdir/tsdb.local"
-exec $JAVA $JVMARGS -classpath "$CLASSPATH" net.opentsdb.tools.$MAINCLASS "$@"
+exec $JAVA $JVMARGS -Djava.library.path=$BASEMAPR/lib -classpath "$CLASSPATH" net.opentsdb.tools.$MAINCLASS "$@"

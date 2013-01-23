@@ -33,7 +33,7 @@ unset HBASE_HOME
 exec "$hbh/bin/hbase" shell <<EOF
 create '$UID_TABLE',
   {NAME => 'id', COMPRESSION => '$COMPRESSION'},
-  {NAME => 'name', COMPRESSION => '$COMPRESSION'}
+  {NAME => 'name', COMPRESSION => '$COMPRESSION'},
   {NAME => 'rowlock', COMPRESSION => '$COMPRESSION'}
 
 create '$TSDB_TABLE',
