@@ -12,4 +12,10 @@
     <name>hbase.table.namespace.mappings</name>
     <value>tsdb:./tsdb,tsdb-uid:./tsdb-uid</value>
   </property>
+
+  <property>
+    <name>fs.mapr.asynchbase.flushonput</name>
+    <value>true</value>
+  </property>
+
 </configuration>
