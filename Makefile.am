@@ -169,6 +169,7 @@ $(builddata_SRC): .git/HEAD $(tsdb_SRC) $(top_srcdir)/build-aux/gen_build_data.s
 	$(srcdir)/build-aux/gen_build_data.sh $(builddata_SRC) $(package)
 
 jar: $(jar) .javac-unittests-stamp .gwtc-stamp
+	rm -f $(ASYNCHBASE)
 
 JAVA_COMPILE := $(JAVAC) $(AM_JAVACFLAGS) -d .
 
