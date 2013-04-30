@@ -18,6 +18,11 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.io.InputStream;
+import java.io.FileInputStream;
+import java.security.MessageDigest;
+import java.io.IOException;
+import java.net.InetAddress;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -230,6 +235,7 @@ public final class UniqueId implements UniqueIdInterface {
   public byte[] getOrCreateId(String name) throws HBaseException {
     short attempt = MAX_ATTEMPTS_ASSIGN_ID;
     HBaseException hbe = null;
+    byte[] lockval = null;
 
     // MapR: Setting norowlock to 'true' for now.
     System.setProperty("tsd.core.norowlock", "true");
@@ -262,7 +268,8 @@ public final class UniqueId implements UniqueIdInterface {
           continue;
         }
       } else {
-        if (!getLockNoRowLock()) {
+        lockval = getLockNoRowLock();
+        if (lockval == null) {
           LOG.error("Failed to acquire lock");
           continue;
         }
@@ -386,7 +393,7 @@ public final class UniqueId implements UniqueIdInterface {
         if (System.getProperty("tsd.core.norowlock") == null) {
           unlock(lock);
         } else {
-          unlockNoRowLock();
+          unlockNoRowLock(lockval);
         }
       }
     }
@@ -594,11 +601,13 @@ public final class UniqueId implements UniqueIdInterface {
   
   // To be used when you want to avoid RowLocks
   private byte[] lock = "lock".getBytes();
-  private byte[] lockval = "myID".getBytes();
   int interval = 61000 / MAX_ATTEMPTS_ASSIGN_ID;
+  private String hostId = getHostId();
+  private String pid = getPid();
   
-  private boolean getLockNoRowLock()
+  private byte [] getLockNoRowLock()
   {
+      byte[] lockval = buildLockVal();
       PutRequest put = new PutRequest(table, MAXID_ROW, ROWLOCK_FAMILY, lock, lockval);
       int attempts = 0;
       try {
@@ -606,15 +615,15 @@ public final class UniqueId implements UniqueIdInterface {
             !client.compareAndSet(put, (byte [])null).joinUninterruptibly(interval)) {
           ++attempts;          
         }
-        return (attempts == MAX_ATTEMPTS_ASSIGN_ID) ? false : true;
+        return (attempts == MAX_ATTEMPTS_ASSIGN_ID) ? null : lockval;
       }
       catch(Throwable w) {
         LOG.error("Exception while attempting to acquire lock");
-        return false;
+        return null;
       }
   }
   
-  public void unlockNoRowLock()
+  public void unlockNoRowLock(byte[] lockval)
   {
       PutRequest put = new PutRequest(table, MAXID_ROW, ROWLOCK_FAMILY, lock, null);
       try {
@@ -702,4 +711,47 @@ public final class UniqueId implements UniqueIdInterface {
     return "UniqueId(" + fromBytes(table) + ", " + kind() + ", " + idWidth + ")";
   }
 
+  // Utility functions
+  private byte [] buildLockVal() {
+    String id = "myId" + "-" + hostId + "-" + pid + "-" + Thread.currentThread().getId();
+    return id.getBytes();
+  }
+
+  private static String getHostId() {
+    // Try /opt/mapr/hostid
+    byte[] buf = new byte[256];
+    try {
+      InputStream is = new FileInputStream("/opt/mapr/hostid");
+      is.read(buf);
+      if (buf.length > 0)
+        return new String(buf, 0, buf.length);
+    } catch (Exception e) {
+      // Do nothing
+    }
+
+    // Try hostname
+    String host = "";
+    try { 
+      host = InetAddress.getLocalHost().getHostName();
+    } catch (Exception e) {
+      // Do nothing
+    }
+    return host;
+  }
+
+  private static String getPid() {
+    byte[] buf = new byte[256];
+    try {
+      InputStream is = new FileInputStream("/proc/self/stat");
+      is.read(buf);
+      for (int i = 0; i < buf.length; i++) {
+         if ((buf[i] < '0') || (buf[i] > '9')) {
+           return new String(buf, 0, i);
+         }
+      }
+    } catch (Exception e) {
+      // Do nothing
+    }
+    return "-1";
+  }
 }
