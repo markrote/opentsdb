@@ -23,6 +23,7 @@ import java.io.FileInputStream;
 import java.security.MessageDigest;
 import java.io.IOException;
 import java.net.InetAddress;
+import java.util.Random;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +38,7 @@ import org.hbase.async.PutRequest;
 import org.hbase.async.RowLock;
 import org.hbase.async.RowLockRequest;
 import org.hbase.async.Scanner;
+import org.hbase.async.AtomicIncrementRequest;
 
 /**
  * Thread-safe implementation of the {@link UniqueIdInterface}.
@@ -250,8 +252,9 @@ public final class UniqueId implements UniqueIdInterface {
 
       // The dance to assign an ID.
       RowLock lock = null;
+      String norowlock = System.getProperty("tsd.core.norowlock");
 
-      if (System.getProperty("tsd.core.norowlock") == null) {
+      if (norowlock == null) {
         try {
           lock = getLock();
         } catch (HBaseException e) {
@@ -297,7 +300,7 @@ public final class UniqueId implements UniqueIdInterface {
           // attempt to lock the row again, and we already locked it, we can't
           // use ICV here, we have to do it manually while we hold the RowLock.
           // To be fixed by HBASE-2292.
-          { // HACK HACK HACK
+          if (norowlock == null) { // HACK HACK HACK
             {
               final byte[] current_maxid = hbaseGet(MAXID_ROW, ID_FAMILY, lock);
               if (current_maxid != null) {
@@ -322,7 +325,15 @@ public final class UniqueId implements UniqueIdInterface {
             }
             hbasePutWithRetry(update_maxid, MAX_ATTEMPTS_PUT,
                               INITIAL_EXP_BACKOFF_DELAY);
-          } // end HACK HACK HACK.
+          } // end HACK HACK HACK. 
+          else {
+            AtomicIncrementRequest increment_maxid = 
+                    new AtomicIncrementRequest(table, MAXID_ROW, ID_FAMILY, kind);
+            id = hbaseAtomicIncWithRetry(increment_maxid, MAX_ATTEMPTS_PUT,
+                                         INITIAL_EXP_BACKOFF_DELAY);
+            row = Bytes.fromLong(id);
+          }
+
           LOG.info("Got ID=" + id
                    + " for kind='" + kind() + "' name='" + name + "'");
           // row.length should actually be 8.
@@ -378,8 +389,13 @@ public final class UniqueId implements UniqueIdInterface {
         try {
           final PutRequest forward_mapping = new PutRequest(
             table, toBytes(name), ID_FAMILY, kind, row);
-          hbasePutWithRetry(forward_mapping, MAX_ATTEMPTS_PUT,
-                            INITIAL_EXP_BACKOFF_DELAY);
+          if (norowlock == null) {
+            hbasePutWithRetry(forward_mapping, MAX_ATTEMPTS_PUT,
+                              INITIAL_EXP_BACKOFF_DELAY);
+          } else {
+            hbaseAtomicCreateWithRetry(forward_mapping, MAX_ATTEMPTS_PUT,
+                                       INITIAL_EXP_BACKOFF_DELAY);
+          }
         } catch (HBaseException e) {
           LOG.error("Failed to Put forward mapping!  ID leaked: " + id, e);
           hbe = e;
@@ -390,7 +406,7 @@ public final class UniqueId implements UniqueIdInterface {
         addNameToCache(row, name);
         return row;
       } finally {
-        if (System.getProperty("tsd.core.norowlock") == null) {
+        if (norowlock == null) {
           unlock(lock);
         } else {
           unlockNoRowLock(lockval);
@@ -603,7 +619,12 @@ public final class UniqueId implements UniqueIdInterface {
   private byte[] lock = "lock".getBytes();
   int interval = 61000 / MAX_ATTEMPTS_ASSIGN_ID;
   private String hostId = getHostId();
-  private String pid = getPid();
+
+  private static final Random random;
+  static {
+    final long seed = System.nanoTime();
+    random = new Random(seed);
+  }
   
   private byte [] getLockNoRowLock()
   {
@@ -671,6 +692,56 @@ public final class UniqueId implements UniqueIdInterface {
    * @throws HBaseException if all the attempts have failed.  This exception
    * will be the exception of the last attempt.
    */
+  private long hbaseAtomicIncWithRetry(final AtomicIncrementRequest inc, short attempts, short wait)
+    throws HBaseException {
+    while (attempts-- > 0) {
+      try {
+        return client.atomicIncrement(inc).joinUninterruptibly().longValue();
+      } catch (HBaseException e) {
+        if (attempts > 0) {
+          LOG.error("Inc failed, attempts left=" + attempts
+                    + " (retrying in " + wait + " ms)", e);
+          try {
+            Thread.sleep(wait);
+          } catch (InterruptedException ie) {
+            throw new RuntimeException("interrupted", ie);
+          }
+          wait *= 2;
+        } else {
+          throw e;
+        }
+      } catch (Exception e) {
+        LOG.error("WTF?  Unexpected exception type", e);
+      }
+    }
+    throw new IllegalStateException("This code should never be reached!");
+  }
+  private void hbaseAtomicCreateWithRetry(final PutRequest put, short attempts, short wait)
+    throws HBaseException {
+    put.setBufferable(false);  // TODO(tsuna): Remove once this code is async.
+    while (attempts-- > 0) {
+      try {
+        client.atomicCreate(put).joinUninterruptibly();
+        return;
+      } catch (HBaseException e) {
+        if (attempts > 0) {
+          LOG.error("Put failed, attempts left=" + attempts
+                    + " (retrying in " + wait + " ms), put=" + put, e);
+          try {
+            Thread.sleep(wait);
+          } catch (InterruptedException ie) {
+            throw new RuntimeException("interrupted", ie);
+          }
+          wait *= 2;
+        } else {
+          throw e;
+        }
+      } catch (Exception e) {
+        LOG.error("WTF?  Unexpected exception type, put=" + put, e);
+      }
+    }
+    throw new IllegalStateException("This code should never be reached!");
+  }
   private void hbasePutWithRetry(final PutRequest put, short attempts, short wait)
     throws HBaseException {
     put.setBufferable(false);  // TODO(tsuna): Remove once this code is async.
@@ -713,7 +784,7 @@ public final class UniqueId implements UniqueIdInterface {
 
   // Utility functions
   private byte [] buildLockVal() {
-    String id = "myId" + "-" + hostId + "-" + pid + "-" + Thread.currentThread().getId();
+    String id = "myId" + "-" + hostId + "-" + random.nextLong() + "-" + Thread.currentThread().getId();
     return id.getBytes();
   }
 
@@ -737,21 +808,5 @@ public final class UniqueId implements UniqueIdInterface {
       // Do nothing
     }
     return host;
-  }
-
-  private static String getPid() {
-    byte[] buf = new byte[256];
-    try {
-      InputStream is = new FileInputStream("/proc/self/stat");
-      is.read(buf);
-      for (int i = 0; i < buf.length; i++) {
-         if ((buf[i] < '0') || (buf[i] > '9')) {
-           return new String(buf, 0, i);
-         }
-      }
-    } catch (Exception e) {
-      // Do nothing
-    }
-    return "-1";
   }
 }
