@@ -3,6 +3,12 @@ OpenTSDB - User visible changes.
 * Version 1.1.0 (2013-01-??) [???????]
 
 Noteworthy changes:
+  - UIDs are now assigned in a lock-less fashion.
+
+
+* Version 1.1.0 (2013-03-08) [12879d7]
+
+Noteworthy changes:
   - Licensing adjustment: allow LGPLv2.1+ in addition to LGPLv3+.
   - Various fixes used when customizing size of UniqueId.  The default size
     is 3 bytes and is a compile-time constant rarely changed in practice.
