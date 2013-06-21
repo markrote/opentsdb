@@ -9,3 +9,7 @@ config.log
 config.status
 configure
 pom.xml
+*.classpath
+.eclipse
+.project
+gensrc
