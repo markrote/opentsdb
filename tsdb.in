@@ -64,6 +64,9 @@ fi
 # MapR native library path
 JVMARGS="${JVMARGS} -Djava.library.path=${BASEMAPR}/lib"
 
+# TSD compactions are not required with M7
+JVMARGS="${JVMARGS} -Dtsd.feature.compactions=false"
+
 usage() {
   echo >&2 "usage: $me <command> [args]"
   echo 'Valid commands: fsck, import, mkmetric, query, tsd, scan, uid'

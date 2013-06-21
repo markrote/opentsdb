@@ -1,8 +1,9 @@
 OpenTSDB - User visible changes.
 
-* Version 1.1.0 (2013-01-??) [???????]
+* Version 1.1.0-mapr (2013-01-??) [???????]
 
 Noteworthy changes:
+  - TSDB data compaction is disabled by default.
   - UIDs are now assigned in a lock-less fashion.
 
 
