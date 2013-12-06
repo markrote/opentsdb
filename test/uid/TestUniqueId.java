@@ -24,7 +24,6 @@ import net.opentsdb.core.TSDB;
 import net.opentsdb.utils.Config;
 
 import org.hbase.async.AtomicIncrementRequest;
-import org.hbase.async.Bytes;
 import org.hbase.async.GetRequest;
 import org.hbase.async.HBaseClient;
 import org.hbase.async.HBaseException;
@@ -66,7 +65,7 @@ import static org.powermock.api.mockito.PowerMockito.mock;
 @PowerMockIgnore({"javax.management.*", "javax.xml.*",
                   "ch.qos.*", "org.slf4j.*",
                   "com.sum.*", "org.xml.*"})
-@PrepareForTest({ HBaseClient.class, TSDB.class, Config.class })
+@PrepareForTest({ HBaseClient.class })
 public final class TestUniqueId {
 
   private HBaseClient client = mock(HBaseClient.class);
@@ -264,12 +263,7 @@ public final class TestUniqueId {
   public void getOrCreateIdAssignIdWithSuccess() {
     uid = new UniqueId(client, table, kind, 3);
     final byte[] id = { 0, 0, 5 };
-    final Config config = mock(Config.class);
-    when(config.enable_realtime_uid()).thenReturn(false);
-    final TSDB tsdb = mock(TSDB.class);
-    when(tsdb.getConfig()).thenReturn(config);
-    uid.setTSDB(tsdb);
-    
+
     when(client.get(anyGet()))      // null  =>  ID doesn't exist.
       .thenReturn(Deferred.<ArrayList<KeyValue>>fromResult(null));
     // Watch this! ______,^   I'm writing C++ in Java!
@@ -278,7 +272,6 @@ public final class TestUniqueId {
       .thenReturn(Deferred.fromResult(5L));
 
     when(client.compareAndSet(anyPut(), emptyArray()))
-      .thenReturn(Deferred.fromResult(true))
       .thenReturn(Deferred.fromResult(true));
 
     assertArrayEquals(id, uid.getOrCreateId("foo"));
@@ -319,7 +312,7 @@ public final class TestUniqueId {
 
   @Test  // Test the creation of an ID with a race condition.
   @PrepareForTest({HBaseClient.class, Deferred.class})
-   public void getOrCreateIdAssignIdWithRaceCondition() {
+  public void getOrCreateIdAssignIdWithRaceCondition() {
     // Simulate a race between client A and client B.
     // A does a Get and sees that there's no ID for this name.
     // B does a Get and sees that there's no ID too, and B actually goes
@@ -327,8 +320,8 @@ public final class TestUniqueId {
     // Then A attempts to go through the process and should discover that the
     // ID has already been assigned.
 
-    uid = new UniqueId(client, table, kind, 3); // Used by client A.
-    HBaseClient client_b = mock(HBaseClient.class); // For client B.
+    uid = new UniqueId(client, table, kind, 3);  // Used by client A.
+    HBaseClient client_b = mock(HBaseClient.class);  // For client B.
     final UniqueId uid_b = new UniqueId(client_b, table, kind, 3);
 
     final byte[] id = { 0, 0, 5 };
@@ -353,12 +346,13 @@ public final class TestUniqueId {
 
     // Start the race when answering A's first Get.
     try {
-      PowerMockito.doAnswer(the_race).when(d).joinUninterruptibly();
+      when(d.joinUninterruptibly())
+        .thenAnswer(the_race);  // Start the race when answering A's first Get.
     } catch (Exception e) {
       fail("Should never happen: " + e);
     }
 
-    when(client_b.get(anyGet())) // null => ID doesn't exist.
+    when(client_b.get(anyGet()))      // null  =>  ID doesn't exist.
       .thenReturn(Deferred.<ArrayList<KeyValue>>fromResult(null));
     // Watch this! ______,^ I'm writing C++ in Java!
 
@@ -366,7 +360,6 @@ public final class TestUniqueId {
       .thenReturn(Deferred.fromResult(5L));
 
     when(client_b.compareAndSet(anyPut(), emptyArray()))
-      .thenReturn(Deferred.fromResult(true))
       .thenReturn(Deferred.fromResult(true));
 
     // Now that B is finished, A proceeds and allocates a UID that will be
@@ -376,23 +369,23 @@ public final class TestUniqueId {
       .thenReturn(Deferred.fromResult(6L));
 
     when(client.compareAndSet(anyPut(), emptyArray()))
-      .thenReturn(Deferred.fromResult(true)) // Orphan reverse mapping.
-      .thenReturn(Deferred.fromResult(false)); // Already CAS'ed by A.
+      .thenReturn(Deferred.fromResult(true))    // Orphan reverse mapping.
+      .thenReturn(Deferred.fromResult(false));  // Already CAS'ed by A.
 
     // Start the execution.
     assertArrayEquals(id, uid.getOrCreateId("foo"));
 
     // Verify the order of execution too.
     final InOrder order = inOrder(client, client_b);
-    order.verify(client).get(anyGet()); // 1st Get for A.
-    order.verify(client_b).get(anyGet()); // 1st Get for B.
+    order.verify(client).get(anyGet());             // 1st Get for A.
+    order.verify(client_b).get(anyGet());           // 1st Get for B.
     order.verify(client_b).atomicIncrement(incrementForRow(MAXID));
     order.verify(client_b, times(2)).compareAndSet(anyPut(), // both mappings.
                                                    emptyArray());
     order.verify(client).atomicIncrement(incrementForRow(MAXID));
     order.verify(client, times(2)).compareAndSet(anyPut(), // both mappings.
                                                  emptyArray());
-    order.verify(client).get(anyGet()); // A retries and gets it.
+    order.verify(client).get(anyGet());             // A retries and gets it.
   }
 
   @Test
@@ -423,12 +416,7 @@ public final class TestUniqueId {
   @Test  // ICV throws an exception, we can't get an ID.
   public void getOrCreateIdWithICVFailure() {
     uid = new UniqueId(client, table, kind, 3);
-    final Config config = mock(Config.class);
-    when(config.enable_realtime_uid()).thenReturn(false);
-    final TSDB tsdb = mock(TSDB.class);
-    when(tsdb.getConfig()).thenReturn(config);
-    uid.setTSDB(tsdb);
-    
+
     when(client.get(anyGet()))      // null  =>  ID doesn't exist.
       .thenReturn(Deferred.<ArrayList<KeyValue>>fromResult(null));
     // Watch this! ______,^   I'm writing C++ in Java!
@@ -436,16 +424,15 @@ public final class TestUniqueId {
     // Update once HBASE-2292 is fixed:
     HBaseException hbe = fakeHBaseException();
     when(client.atomicIncrement(incrementForRow(MAXID)))
-      .thenReturn(Deferred.<Long>fromError(hbe))
+      .thenThrow(hbe)
       .thenReturn(Deferred.fromResult(5L));
 
     when(client.compareAndSet(anyPut(), emptyArray()))
-      .thenReturn(Deferred.fromResult(true))
       .thenReturn(Deferred.fromResult(true));
 
     final byte[] id = { 0, 0, 5 };
     assertArrayEquals(id, uid.getOrCreateId("foo"));
-    verify(client, times(1)).get(anyGet()); // Initial Get.
+    verify(client, times(2)).get(anyGet()); // Initial Get + retry.
     // First increment (failed) + retry.
     verify(client, times(2)).atomicIncrement(incrementForRow(MAXID));
     // Reverse + forward mappings.
@@ -455,12 +442,7 @@ public final class TestUniqueId {
   @Test  // Test that the reverse mapping is created before the forward one.
   public void getOrCreateIdPutsReverseMappingFirst() {
     uid = new UniqueId(client, table, kind, 3);
-    final Config config = mock(Config.class);
-    when(config.enable_realtime_uid()).thenReturn(false);
-    final TSDB tsdb = mock(TSDB.class);
-    when(tsdb.getConfig()).thenReturn(config);
-    uid.setTSDB(tsdb);
-    
+
     when(client.get(anyGet()))      // null  =>  ID doesn't exist.
       .thenReturn(Deferred.<ArrayList<KeyValue>>fromResult(null));
     // Watch this! ______,^   I'm writing C++ in Java!
@@ -469,7 +451,6 @@ public final class TestUniqueId {
       .thenReturn(Deferred.fromResult(6L));
 
     when(client.compareAndSet(anyPut(), emptyArray()))
-      .thenReturn(Deferred.fromResult(true))
       .thenReturn(Deferred.fromResult(true));
 
     final byte[] id = { 0, 0, 6 };
@@ -900,6 +881,18 @@ public final class TestUniqueId {
 
   private static GetRequest anyGet() {
     return any(GetRequest.class);
+  }
+
+  private static GetRequest getForRow(final byte[] row) {
+    return argThat(new ArgumentMatcher<GetRequest>() {
+      public boolean matches(Object get) {
+        return Arrays.equals(((GetRequest) get).key(), row);
+      }
+      public void describeTo(org.hamcrest.Description description) {
+        description.appendText("AtomicIncrementRequest for row "
+                               + Arrays.toString(row));
+      }
+    });
   }
 
   private static AtomicIncrementRequest incrementForRow(final byte[] row) {

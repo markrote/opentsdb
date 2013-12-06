@@ -588,13 +588,7 @@ final class RowSeq implements DataPoints {
 
     public long timestamp() {
       assert qual_index > 0: "not initialized: " + this;
-      if ((qualifier & Const.MS_FLAG) == Const.MS_FLAG) {
-        final long ms = (qualifier & 0x0FFFFFC0) >>> (Const.MS_FLAG_BITS);
-        return (base_time * 1000) + ms;            
-      } else {
-        final long seconds = (qualifier & 0xFFFF) >>> Const.FLAG_BITS;
-        return (base_time + seconds) * 1000;
-      }
+      return base_time + ((qualifier & 0xFFFF) >>> Const.FLAG_BITS);
     }
 
     public boolean isInteger() {
